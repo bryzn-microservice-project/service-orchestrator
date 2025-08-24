@@ -1,0 +1,28 @@
+# Maven target directory
+/target/
+
+# VS Code settings
+.vscode/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Spring Boot specific
+spring.log
+
+# Others
+*.class
+
+# Ignore environment variable files
+.env
+
+# Generated jar files
+*.jar
