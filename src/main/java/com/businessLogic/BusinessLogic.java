@@ -77,6 +77,7 @@ public class BusinessLogic {
         // FIRST TRANSACTION - MOVIE TICKET REQUEST
         // SECOND TRANSACTION - SEAT REQUEST
         // THIRD TRANSACTION - PAYMENT REQUEST
+        //     * SEND CONFIRMATION TO SEATING SERVICE TO UPDATE SEAT STATUS TO BOOKED
         // FOURTH TRANSACTION - MOVIE TICKET RESPONSE
 
         ResponseEntity<String> movieResponse = createMovieRequest(movieRequest);
@@ -98,9 +99,19 @@ public class BusinessLogic {
         ResponseEntity<String> paymentResponse = createPaymentRequest(movieRequest);
         if (paymentResponse.getStatusCode() == HttpStatus.OK) {
             LOG.info("{PaymentRequest} processed successfully. Transaction complete!");
+
+            // sending confirmation to the seating service to update the seat status to BOOKED
+            ResponseEntity<String> confirmationResponse = createConfirmationResponse(movieRequest.getCorrelatorId());
+            if(confirmationResponse.getStatusCode() == HttpStatus.OK)
+                LOG.info("Seat status updated to BOOKED successfully.");
+            else
+            {
+                LOG.error("Failed to update seat status to BOOKED.");
+                return handleFailedResponses(3);
+            }
         } else {
             LOG.error("Failed to process {PaymentRequest}... Ending the transaction.");
-            return handleFailedResponses(3);
+            return handleFailedResponses(4);
         }
 
         ResponseEntity<String> apiGatewayResponse = createMovieTicketResponse(movieRequest);
@@ -108,7 +119,7 @@ public class BusinessLogic {
             LOG.info("{MovieTicketResponse} sent back to API Gateway successfully. End of Orchestration.");
         } else {
             LOG.error("Failed to send {MovieTicketResponse} back to API Gateway... End of Orchestration.");
-            return handleFailedResponses(4);
+            return handleFailedResponses(5);
         }
 
         return new ResponseEntity<>("Orchestration completed successfully!", HttpStatus.OK);
@@ -205,8 +216,21 @@ public class BusinessLogic {
         return apiGatewayResponse;
     }
 
+    private ResponseEntity<String> createConfirmationResponse(int correlatorId)
+    {
+        return seatServiceClient
+                .post()
+                .uri("http://seat-service:8085/api/v1/confirmation")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(correlatorId)
+                .retrieve()
+                .toEntity(String.class);
+    }
+
+
     private int ticketRequest() {
-        mockTicket();
+        // MOCK RETURN
+        // mockTicket();
         ResponseEntity<String> ticketManagerResponse = ticketMangerClient
                 .post()
                 .uri(restEndpoints.get(restRouter.get("MovieTicketResponse")))
@@ -228,9 +252,12 @@ public class BusinessLogic {
                 failedService = "Seating Service";
                 break;
             case 3:
-                failedService = "Payment Service";
+                failedService = "Seating Service (BOOKING)";
                 break;
             case 4:
+                failedService = "Payment Service";
+                break;
+            case 5:
                 failedService = "API Gateway Service";
             default:
                 LOG.error("Invalid stage for handling.");
