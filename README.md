@@ -7,19 +7,19 @@
 
 {
   "topicName": "MovieTicketRequest",
-  "correlatorId": 12345,
-  "ticketId": 67890,
+  "correlatorId": 1001,
   "movie": {
     "movieName": "Inception",
-    "showtime": "2025-08-23T19:30:00Z"
+    "showtime": "2025-11-10T19:30:00-06:00",
+    "genre": "SCIFI"
   },
-  "seatNumber": "A12",
+  "seatNumber": "B6",
   "price": 12.50,
   "payment": {
-    "topicName": "payment.process",
-    "correlatorId": 12345,
+    "topicName": "PaymentRequest",
+    "correlatorId": 1001,
     "paymentAmount": 12.50,
-    "email": "customer@example.com",
+    "email": "bryzntest@gmail.com",
     "creditCard": "4111111111111111",
     "cvc": "123"
   }
