@@ -75,13 +75,19 @@ public class MainController {
                         break;
                     default: {
                         LOG.warn("Non-supported Topic: " + topicName);
+                        response = ResponseEntity.badRequest()
+                                .body("Non-supported Topic: " + topicName);
                     }
                 }
             } catch (Exception e) {
                 LOG.error(e.getMessage());
+                response = ResponseEntity.status(500)
+                        .body("Inernal Error Failed to process " + topicName);
             }
         } else {
             LOG.error("Failed schema validation...");
+            response = ResponseEntity.badRequest()
+                    .body("Schema Validation Failed for topic: " + topicName);
         }
 
         return response;

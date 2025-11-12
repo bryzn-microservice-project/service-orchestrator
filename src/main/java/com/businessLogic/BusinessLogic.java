@@ -16,7 +16,10 @@ import com.topics.CreateTicketResponse;
 import com.topics.MovieTicketRequest;
 import com.topics.MovieTicketResponse;
 import com.topics.PaymentRequest;
+import com.topics.PaymentResponse;
 import com.topics.SeatRequest;
+import com.topics.SeatResponse;
+import com.topics.SeatResponse.Status;
 import jakarta.annotation.PostConstruct;
 
 /*
@@ -26,7 +29,7 @@ import jakarta.annotation.PostConstruct;
 @Service
 public class BusinessLogic {
     private static final Logger LOG = LoggerFactory.getLogger(BusinessLogic.class);
-
+    private static ObjectMapper mapper = new ObjectMapper();
     // REST Clients to communicate with other microservices
     private RestClient apiGatewayClient = RestClient.create();
     private RestClient paymentServiceClient = RestClient.create();
@@ -110,21 +113,21 @@ public class BusinessLogic {
         // THIRD TRANSACTION - CREATE TICKET REQUEST
         // FOURTH TRANSACTION - MOVIE TICKET RESPONSE
 
-        ResponseEntity<String> seatResponse = createSeatRequest(movieRequest);
-        if (seatResponse.getStatusCode() == HttpStatus.OK) {
+        SeatResponse seatResponse = createSeatRequest(movieRequest);
+        if (seatResponse.getStatus().value() == "HOLDING") {
             LOG.info("{SeatRequest} processed successfully. Now creating {PaymentRequest}...");
         } else {
             LOG.error("Failed to process {SeatRequest}... Ending the transaction.");
             return handleFailedResponses(1);
         }
 
-        ResponseEntity<String> paymentResponse = createPaymentRequest(movieRequest);
-        if (paymentResponse.getStatusCode() == HttpStatus.OK) {
+        PaymentResponse paymentResponse = createPaymentRequest(movieRequest);
+        if (paymentResponse.getStatus().value() == "SUCCESSFUL") {
             LOG.info("{PaymentRequest} processed successfully. Now creating {CreateTicketRequest}...");
 
             // sending confirmation to the seating service to update the seat status to BOOKED
-            ResponseEntity<String> confirmationResponse = createConfirmationResponse(movieRequest.getCorrelatorId());
-            if(confirmationResponse.getStatusCode() == HttpStatus.OK)
+            Status confirmationResponse = createConfirmationResponse(movieRequest.getCorrelatorId());
+            if(confirmationResponse == Status.BOOKED)
                 LOG.info("Seat status updated to BOOKED successfully.");
             else
             {
@@ -173,13 +176,12 @@ public class BusinessLogic {
                 .toEntity(String.class);
         LOG.info("MovieRequest processed with status: " + movieServiceResponse.getStatusCode());
 
-        ObjectMapper mapper = new ObjectMapper();
         CreateTicketResponse response = new CreateTicketResponse();
         try {
             if (movieServiceResponse.getBody() != null) {
                 response = mapper.readValue(movieServiceResponse.getBody(), CreateTicketResponse.class);
             } else {
-                LOG.error("Movie Service returned null/empty body for CreateTicketRequest");
+                LOG.error("Movie Service returned null/empty body for CreateTicketResponse");
             }
         } catch (JsonProcessingException e) {
             LOG.error("Failed to parse CreateTicketResponse from Movie Service", e);
@@ -187,7 +189,7 @@ public class BusinessLogic {
         return response;
     }
 
-    private ResponseEntity<String> createSeatRequest(MovieTicketRequest movieRequest) {    
+    private SeatResponse createSeatRequest(MovieTicketRequest movieRequest) {    
         LOG.info("Creating a SeatRequest based on the MovieTicketRequest...");
         SeatRequest seatRequest = new SeatRequest();
         seatRequest.setTopicName("SeatRequest");
@@ -206,10 +208,21 @@ public class BusinessLogic {
                 .retrieve()
                 .toEntity(String.class);
         LOG.info("SeatRequest processed with status: " + seatServiceResponse.getStatusCode());
-        return seatServiceResponse;
+
+        SeatResponse response = new SeatResponse();
+        try {
+            if (seatServiceResponse.getBody() != null) {
+                response = mapper.readValue(seatServiceResponse.getBody(), SeatResponse.class);
+            } else {
+                LOG.error("Payment Service returned null/empty body for PaymentResponse");
+            }
+        } catch (JsonProcessingException e) {
+            LOG.error("Failed to parse PaymentResponse from Payment Service", e);
+        }
+        return response;
     }
 
-    private ResponseEntity<String> createPaymentRequest(MovieTicketRequest movieRequest) {
+    private PaymentResponse createPaymentRequest(MovieTicketRequest movieRequest) {
         // MOCK RETURN
         // return mockResponse();
 
@@ -232,7 +245,18 @@ public class BusinessLogic {
                 .retrieve()
                 .toEntity(String.class);
         LOG.info("PaymentRequest processed with status: " + paymentServiceResponse.getStatusCode());
-        return paymentServiceResponse;
+
+        PaymentResponse response = new PaymentResponse();
+        try {
+            if (paymentServiceResponse.getBody() != null) {
+                response = mapper.readValue(paymentServiceResponse.getBody(), PaymentResponse.class);
+            } else {
+                LOG.error("Payment Service returned null/empty body for PaymentResponse");
+            }
+        } catch (JsonProcessingException e) {
+            LOG.error("Failed to parse PaymentResponse from Payment Service", e);
+        }
+        return response;
     }
 
     private ResponseEntity<String> createMovieTicketResponse(MovieTicketRequest movieRequest, int ticket) {
@@ -260,43 +284,58 @@ public class BusinessLogic {
         return apiGatewayResponse;
     }
 
-    private ResponseEntity<String> createConfirmationResponse(int correlatorId)
+    private Status createConfirmationResponse(int correlatorId)
     {
-        return seatServiceClient
+        ResponseEntity<String> statusResponse = seatServiceClient
                 .post()
                 .uri(restEndpoints.get(restRouter.get("SeatRequest")) + "confirmation")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(correlatorId)
                 .retrieve()
                 .toEntity(String.class);
+        
+        Status status = null;
+        if (statusResponse.getBody() != null) {
+            status = Status.fromValue(statusResponse.getBody());
+        } else {
+            LOG.error("Seating Service returned null/empty body for the confirmation status");
+        }
+        return status;
     }
 
     private ResponseEntity<String> handleFailedResponses(int stage) {
         String failedService = "";
+        HttpStatus status;
         switch (stage) {
             case 1:
-                failedService = "Seating Service";
-                break;
+            // Couldn't place the seat on HOLD -> conflict (e.g. already held/booked)
+            failedService = "Seating Service (HOLDING)";
+            status = HttpStatus.CONFLICT;
+            break;
             case 2:
-                failedService = "Seating Service (BOOKING)";
-                break;
+            // Failed to confirm booking in seating service -> server error
+            failedService = "Seating Service (BOOKING)";
+            status = HttpStatus.INTERNAL_SERVER_ERROR;
+            break;
             case 3:
-                failedService = "Payment Service";
-                break;
+            // Payment failure or payment service error -> bad gateway (downstream)
+            failedService = "Payment Service";
+            status = HttpStatus.BAD_GATEWAY;
+            break;
             case 4:
-                failedService = "Movie Service";
-                break;
+            // Movie service failure -> bad gateway
+            failedService = "Movie Service";
+            status = HttpStatus.BAD_GATEWAY;
+            break;
             case 5:
-                failedService = "API Gateway Service";
+            // API Gateway failure -> bad gateway
+            failedService = "API Gateway";
+            status = HttpStatus.BAD_GATEWAY;
+            break;
             default:
-                LOG.error("Invalid stage for handling.");
-                return new ResponseEntity<>("Invalid stage", HttpStatus.BAD_REQUEST);
+            status = HttpStatus.SERVICE_UNAVAILABLE;
+            break;
         }
-        return new ResponseEntity<>("Orchestration failed at the " + failedService, HttpStatus.SERVICE_UNAVAILABLE);
-    }
-
-    // MOCK METHODS - To be removed when actual implementation is done
-    private ResponseEntity<String> mockResponse() {
-        return new ResponseEntity<>("Mock response from BusinessLogic", HttpStatus.OK);
+        return new ResponseEntity<>("Orchestration failed at the " + failedService, status);
     }
 }
