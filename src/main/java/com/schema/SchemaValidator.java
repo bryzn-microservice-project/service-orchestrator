@@ -2,6 +2,7 @@ package com.schema;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -10,16 +11,12 @@ import org.everit.json.schema.ValidationException;
 import org.everit.json.schema.loader.SchemaLoader;
 import org.json.JSONObject;
 import org.json.JSONTokener;
-import org.springframework.stereotype.Service;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.stereotype.Service;
 
-/*
- * Valiation Service for JSON schemas from the internal icd
- */
 @Service
 public class SchemaValidator {
-    private static final String SCHEMA_BASE_PATH = "json-schema/";
 
     private final ResourceLoader resourceLoader;
 
@@ -28,47 +25,39 @@ public class SchemaValidator {
     }
 
     public boolean validateJson(InputStream schemaStream, JSONObject jsonNode) {
-        boolean valid = false;
         try {
             JSONObject rawSchema = new JSONObject(new JSONTokener(schemaStream));
 
+            // Set the base URL to the folder containing the schemas
+            URL baseUrl = getClass().getClassLoader().getResource("json-schema");
+            System.out.println("Base URL: " + baseUrl);
+            if (baseUrl == null) {
+                throw new RuntimeException("Could not locate json-schema folder in classpath");
+            }
+
             Schema schema = SchemaLoader.builder()
-                    .schemaJson(rawSchema)
-                    .resolutionScope("classpath:/" + SCHEMA_BASE_PATH)
-                    .build()
-                    .load()
-                    .build();
+                .schemaJson(rawSchema)
+                .resolutionScope("classpath:/json-schema/") // base URI for resolving $ref
+                .schemaClient(new ClasspathSchemaClient()) 
+                .build()
+                .load()
+                .build();
 
             schema.validate(jsonNode);
-            valid = true;
+            return true;
         } catch (ValidationException e) {
             System.out.println("Validation failed");
             List<String> errors = collectErrors(e);
             errors.forEach(err -> System.out.println(" - " + err));
-            valid = false;
-        }
-        return valid;
-    }
-
-    public InputStream getSchemaStream(String jsonPath) {
-        String location = "classpath:" + jsonPath;
-        Resource resource = resourceLoader.getResource(location);
-        System.out.println("Loading schema at: " + location + " | Exists? " + resource.exists());
-        try {
-            return resource.exists() ? resource.getInputStream() : null;
-        } catch (IOException e) {
-            e.printStackTrace();
-            return null;
+            return false;
         }
     }
 
     private List<String> collectErrors(ValidationException e) {
         List<String> errors = new ArrayList<>();
         if (e.getCausingExceptions().isEmpty()) {
-            // leaf node = actual error
             errors.add(e.getMessage());
         } else {
-            // recurse into children
             for (ValidationException cause : e.getCausingExceptions()) {
                 errors.addAll(collectErrors(cause));
             }
@@ -76,4 +65,17 @@ public class SchemaValidator {
         return errors;
     }
 
+    public InputStream getSchemaStream(String schemaPath) {
+        try {
+            Resource resource = resourceLoader.getResource("classpath:" + schemaPath);
+            if (!resource.exists()) {
+                System.out.println("Schema not found: " + schemaPath);
+                return null;
+            }
+            return resource.getInputStream();
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
 }

@@ -105,6 +105,7 @@ public class BusinessLogic {
      */
 
     public ResponseEntity<String> orchestrate(MovieTicketRequest movieRequest) {
+        System.out.println("\n");
         LOG.info("Orchestrating the {MovieTicketRequest}...");
 
         // FIRST TRANSACTION - SEAT REQUEST
@@ -223,9 +224,6 @@ public class BusinessLogic {
     }
 
     private PaymentResponse createPaymentRequest(MovieTicketRequest movieRequest) {
-        // MOCK RETURN
-        // return mockResponse();
-
         LOG.info("Creating a PaymentRequest based on the MovieTicketRequest...");
         PaymentRequest paymentRequest = new PaymentRequest();
         paymentRequest.setTopicName("PaymentRequest");
@@ -260,9 +258,6 @@ public class BusinessLogic {
     }
 
     private ResponseEntity<String> createMovieTicketResponse(MovieTicketRequest movieRequest, int ticket) {
-        // MOCK RETURN
-        // return new ResponseEntity<>("BRY123", HttpStatus.OK);
-        
         LOG.info("Creating a MovieTicketResponse to send back to the API Gateway...");
         MovieTicketResponse movieResponse = new MovieTicketResponse();
         movieResponse.setTopicName("MovieTicketResponse");
@@ -303,7 +298,7 @@ public class BusinessLogic {
         return status;
     }
 
-    private ResponseEntity<String> handleFailedResponses(int stage) {
+    ResponseEntity<String> handleFailedResponses(int stage) {
         String failedService = "";
         HttpStatus status;
         switch (stage) {
@@ -333,7 +328,7 @@ public class BusinessLogic {
             status = HttpStatus.BAD_GATEWAY;
             break;
             default:
-            status = HttpStatus.SERVICE_UNAVAILABLE;
+            status = HttpStatus.BAD_REQUEST;
             break;
         }
         return new ResponseEntity<>("Orchestration failed at the " + failedService, status);
