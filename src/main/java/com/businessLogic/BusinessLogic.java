@@ -31,12 +31,11 @@ public class BusinessLogic {
     private static final Logger LOG = LoggerFactory.getLogger(BusinessLogic.class);
     private static ObjectMapper mapper = new ObjectMapper();
     // REST Clients to communicate with other microservices
-    private RestClient apiGatewayClient = RestClient.create();
-    private RestClient paymentServiceClient = RestClient.create();
-    private RestClient movieServiceClient = RestClient.create();
-    private RestClient seatServiceClient = RestClient.create();
+    private final RestClient apiGatewayClient;
+    private final RestClient paymentServiceClient;
+    private final RestClient movieServiceClient;
+    private final RestClient seatServiceClient;
 
-    private HashMap<String, RestClient> restRouter = new HashMap<>();
     private HashMap<RestClient, String> restEndpoints = new HashMap<>();
 
     /*
@@ -76,27 +75,30 @@ public class BusinessLogic {
     private String seatingServicePort;
     private String ss;
 
+    public BusinessLogic(RestClient apiGatewayClient, RestClient paymentServiceClient, RestClient movieServiceClient, RestClient seatServiceClient) {
+        this.apiGatewayClient = apiGatewayClient;
+        this.paymentServiceClient = paymentServiceClient;
+        this.movieServiceClient = movieServiceClient;
+        this.seatServiceClient = seatServiceClient;
+    }
+
     @PostConstruct
     public void init() {
         agw = "http://" + apigateway + ":" + apigatewayPort + "/api/v1/processTopic";
         LOG.info("Business Logic initialized API Gateway at: " + agw);
         restEndpoints.put(apiGatewayClient, agw);
-        restRouter.put("MovieTicketResponse", apiGatewayClient);
 
         ps = "http://" + paymentService + ":" + paymentServicePort + "/api/v1/processTopic";
         LOG.info("Business Logic initialized Payment Service at: " + ps);
         restEndpoints.put(paymentServiceClient, ps);
-        restRouter.put("PaymentRequest", paymentServiceClient);
 
         ms = "http://" + movieService + ":" + movieServicePort + "/api/v1/processTopic";
         LOG.info("Business Logic initialized Movie Service at: " + ms);
         restEndpoints.put(movieServiceClient, ms);
-        restRouter.put("CreateTicketRequest", movieServiceClient);
 
         ss = "http://" + seatingService + ":" + seatingServicePort + "/api/v1/";
         LOG.info("Business Logic initialized Seating Service at: " + ss);
         restEndpoints.put(seatServiceClient, ss);
-        restRouter.put("SeatRequest", seatServiceClient);
     }
 
     /*
@@ -114,7 +116,7 @@ public class BusinessLogic {
         // THIRD TRANSACTION - CREATE TICKET REQUEST
         // FOURTH TRANSACTION - MOVIE TICKET RESPONSE
 
-        SeatResponse seatResponse = createSeatRequest(movieRequest);
+        SeatResponse seatResponse = sendSeatRequest(movieRequest);
         if (seatResponse.getStatus().value() == "HOLDING") {
             LOG.info("{SeatRequest} processed successfully. Now creating {PaymentRequest}...");
         } else {
@@ -122,12 +124,12 @@ public class BusinessLogic {
             return handleFailedResponses(1);
         }
 
-        PaymentResponse paymentResponse = createPaymentRequest(movieRequest);
+        PaymentResponse paymentResponse = sendPaymentRequest(movieRequest);
         if (paymentResponse.getStatus().value() == "SUCCESSFUL") {
             LOG.info("{PaymentRequest} processed successfully. Now creating {CreateTicketRequest}...");
 
             // sending confirmation to the seating service to update the seat status to BOOKED
-            Status confirmationResponse = createConfirmationResponse(movieRequest.getCorrelatorId());
+            Status confirmationResponse = sendConfirmationResponse(movieRequest.getCorrelatorId());
             if(confirmationResponse == Status.BOOKED)
                 LOG.info("Seat status updated to BOOKED successfully.");
             else
@@ -140,7 +142,7 @@ public class BusinessLogic {
             return handleFailedResponses(3);
         }
 
-        CreateTicketResponse ticketResponse = createTicketRequest(movieRequest);
+        CreateTicketResponse ticketResponse = sendCreateTicketRequest(movieRequest);
         if (ticketResponse.getTicketId() != null) {
             LOG.info("{CreateTicketResponse} processed successfully. Now creating {MovieTicketResponse}...");
         } else {
@@ -159,7 +161,7 @@ public class BusinessLogic {
         return new ResponseEntity<>("Orchestration completed successfully!", HttpStatus.OK);
     }
 
-    public CreateTicketResponse createTicketRequest(MovieTicketRequest movieRequest) {
+    CreateTicketResponse sendCreateTicketRequest(MovieTicketRequest movieRequest) {
         LOG.info("Received a CreateTicketRequest. Nothing to do here... Forwarding to the Movie Service");
 
         CreateTicketRequest request = new CreateTicketRequest();
@@ -168,9 +170,9 @@ public class BusinessLogic {
         request.setSeatNumber(movieRequest.getSeatNumber());
         request.setCorrelatorId(movieRequest.getCorrelatorId());
 
-        ResponseEntity<String> movieServiceResponse = restRouter.get("CreateTicketRequest")
+        ResponseEntity<String> movieServiceResponse = movieServiceClient
                 .post()
-                .uri(restEndpoints.get(restRouter.get("CreateTicketRequest")))
+                .uri(restEndpoints.get(movieServiceClient))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(request)
                 .retrieve()
@@ -190,7 +192,7 @@ public class BusinessLogic {
         return response;
     }
 
-    private SeatResponse createSeatRequest(MovieTicketRequest movieRequest) {    
+    SeatResponse sendSeatRequest(MovieTicketRequest movieRequest) {    
         LOG.info("Creating a SeatRequest based on the MovieTicketRequest...");
         SeatRequest seatRequest = new SeatRequest();
         seatRequest.setTopicName("SeatRequest");
@@ -201,9 +203,9 @@ public class BusinessLogic {
 
         LOG.info("Sending a SeatRequest to the [Seating Service]");
 
-        ResponseEntity<String> seatServiceResponse = restRouter.get("SeatRequest")
+        ResponseEntity<String> seatServiceResponse = seatServiceClient
                 .post()
-                .uri(restEndpoints.get(restRouter.get("SeatRequest")) + "processTopic")
+                .uri(restEndpoints.get(seatServiceClient))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(seatRequest)
                 .retrieve()
@@ -223,7 +225,7 @@ public class BusinessLogic {
         return response;
     }
 
-    private PaymentResponse createPaymentRequest(MovieTicketRequest movieRequest) {
+    PaymentResponse sendPaymentRequest(MovieTicketRequest movieRequest) {
         LOG.info("Creating a PaymentRequest based on the MovieTicketRequest...");
         PaymentRequest paymentRequest = new PaymentRequest();
         paymentRequest.setTopicName("PaymentRequest");
@@ -235,9 +237,9 @@ public class BusinessLogic {
 
         LOG.info("Sending a PaymentRequest to the [Payment Service]");
 
-        ResponseEntity<String> paymentServiceResponse = restRouter.get("PaymentRequest")
+        ResponseEntity<String> paymentServiceResponse = paymentServiceClient
                 .post()
-                .uri(restEndpoints.get(restRouter.get("PaymentRequest")))
+                .uri(restEndpoints.get(paymentServiceClient))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(paymentRequest)
                 .retrieve()
@@ -257,7 +259,7 @@ public class BusinessLogic {
         return response;
     }
 
-    private ResponseEntity<String> createMovieTicketResponse(MovieTicketRequest movieRequest, int ticket) {
+    ResponseEntity<String> createMovieTicketResponse(MovieTicketRequest movieRequest, int ticket) {
         LOG.info("Creating a MovieTicketResponse to send back to the API Gateway...");
         MovieTicketResponse movieResponse = new MovieTicketResponse();
         movieResponse.setTopicName("MovieTicketResponse");
@@ -268,9 +270,9 @@ public class BusinessLogic {
 
         LOG.info("Sending a MovieTicketResponse to the [API Gateway Service]");
 
-        ResponseEntity<String> apiGatewayResponse = restRouter.get("MovieTicketResponse")
+        ResponseEntity<String> apiGatewayResponse = apiGatewayClient
                 .post()
-                .uri(restEndpoints.get(restRouter.get("MovieTicketResponse")))
+                .uri(restEndpoints.get(apiGatewayClient))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(movieResponse)
                 .retrieve()
@@ -279,11 +281,11 @@ public class BusinessLogic {
         return apiGatewayResponse;
     }
 
-    private Status createConfirmationResponse(int correlatorId)
+    Status sendConfirmationResponse(int correlatorId)
     {
         ResponseEntity<String> statusResponse = seatServiceClient
                 .post()
-                .uri(restEndpoints.get(restRouter.get("SeatRequest")) + "confirmation")
+                .uri(restEndpoints.get(seatServiceClient) + "confirmation")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(correlatorId)
                 .retrieve()
